@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Mini GTA 3D Android</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<style>
+html,body{
+  margin:0;
+  padding:0;
+  width:100%;
+  height:100%;
+  overflow:hidden;
+  background:black;
+  touch-action:none;
+}
+canvas{
+  display:block;
+  width:100%;
+  height:100%;
+}
+#joystick{position:absolute;left:20px;bottom:20px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.15);z-index:10}
+#stick{position:absolute;width:50px;height:50px;left:35px;top:35px;border-radius:50%;background:rgba(255,255,255,.6)}
+#enter{position:absolute;right:20px;bottom:30px;width:90px;height:50px;border-radius:10px;background:#00c853;color:black;font-weight:bold;z-index:10}
+</style>
+</head>
+<body>
+
+<div id="joystick"><div id="stick"></div></div>
+<button id="enter">AUTO</button>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+// ================= FULLSCREEN =================
+let fs=false;
+function requestFS(){
+  if(fs) return;
+  fs=true;
+  const d=document.documentElement;
+  if(d.requestFullscreen) d.requestFullscreen();
+  else if(d.webkitRequestFullscreen) d.webkitRequestFullscreen();
+}
+document.addEventListener("touchstart",requestFS,{once:true});
+document.addEventListener("click",requestFS,{once:true});
+
+// ================= ESCENA =================
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87ceeb);
+
+const camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,0.1,6000);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener("resize",()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+
+scene.add(new THREE.AmbientLight(0xffffff,0.7));
+const sun=new THREE.DirectionalLight(0xffffff,0.6);
+sun.position.set(60,80,60);
+scene.add(sun);
+
+// ================= MAPA =================
+const MAP=1600;
+const ground=new THREE.Mesh(
+  new THREE.PlaneGeometry(MAP,MAP),
+  new THREE.MeshStandardMaterial({color:0x2e7d32})
+);
+ground.rotation.x=-Math.PI/2;
+scene.add(ground);
+
+// ================= CALLES =================
+const ROAD_SPACING=80,ROAD_WIDTH=8,ROAD_MARGIN=6;
+const roadMat=new THREE.MeshStandardMaterial({color:0x555555});
+const ROAD_LIMIT=MAP/2-40;
+
+for(let i=-ROAD_LIMIT;i<=ROAD_LIMIT;i+=ROAD_SPACING){
+  const r1=new THREE.Mesh(new THREE.PlaneGeometry(MAP,ROAD_WIDTH),roadMat);
+  r1.rotation.x=-Math.PI/2;r1.position.z=i;r1.position.y=0.01;
+  scene.add(r1);
+  const r2=new THREE.Mesh(new THREE.PlaneGeometry(ROAD_WIDTH,MAP),roadMat);
+  r2.rotation.x=-Math.PI/2;r2.position.x=i;r2.position.y=0.01;
+  scene.add(r2);
+}
+
+function isOnRoad(x,z,half){
+  for(let i=-ROAD_LIMIT;i<=ROAD_LIMIT;i+=ROAD_SPACING){
+    if(Math.abs(z-i)<ROAD_WIDTH/2+ROAD_MARGIN+half) return true;
+    if(Math.abs(x-i)<ROAD_WIDTH/2+ROAD_MARGIN+half) return true;
+  }
+  return false;
+}
+
+// ================= COLISIONES =================
+const buildingBoxes=[];
+function canMove(x,z,r){
+  for(const b of buildingBoxes){
+    if(x+r>b.min.x&&x-r<b.max.x&&z+r>b.min.z&&z-r<b.max.z) return false;
+  }
+  return true;
+}
+
+// ================= EDIFICIOS =================
+const buildingColors=[0xd6d3cc,0xb0b0b0,0xc2b280,0xa1866f,0x8d6e63,0xf5f5f5,0x9e9e9e];
+const windowMat=new THREE.MeshStandardMaterial({color:0x222244,emissive:0x111133});
+
+for(let i=0;i<220;i++){
+  let x,z,w;
+  do{
+    x=Math.random()*(MAP-200)-(MAP/2-100);
+    z=Math.random()*(MAP-200)-(MAP/2-100);
+    w=14+Math.random()*10;
+  }while(isOnRoad(x,z,w/2));
+
+  const h=10+Math.random()*45;
+  const g=new THREE.Group();
+
+  const base=new THREE.Mesh(
+    new THREE.BoxGeometry(w,h,w),
+    new THREE.MeshStandardMaterial({color:buildingColors[Math.random()*buildingColors.length|0]})
+  );
+  base.position.y=h/2;
+  g.add(base);
+
+  for(let y=3;y<h-2;y+=3){
+    for(let xw=-w/2+2;xw<w/2-2;xw+=3){
+      const win=new THREE.Mesh(new THREE.BoxGeometry(1.2,1.2,0.2),windowMat);
+      win.position.set(xw,y,w/2+0.11);
+      g.add(win);
+      const win2=win.clone();win2.position.z=-w/2-0.11;
+      g.add(win2);
+    }
+  }
+
+  g.position.set(x,0,z);
+  scene.add(g);
+
+  buildingBoxes.push({
+    min:{x:x-w/2,z:z-w/2},
+    max:{x:x+w/2,z:z+w/2}
+  });
+}
+
+// ================= HUMANOS =================
+function human(color){
+  const g=new THREE.Group();
+  const m=new THREE.MeshStandardMaterial({color});
+  const body=new THREE.Mesh(new THREE.BoxGeometry(0.8,1.2,0.4),m);
+  body.position.y=1.6;
+  const head=new THREE.Mesh(new THREE.BoxGeometry(0.5,0.5,0.5),m);
+  head.position.y=2.4;
+
+  const f=new THREE.MeshBasicMaterial({color:0});
+  const e1=new THREE.Mesh(new THREE.SphereGeometry(0.05),f);
+  const e2=e1.clone();
+  e1.position.set(-0.1,0.05,0.26);
+  e2.position.set(0.1,0.05,0.26);
+  const sm=new THREE.Mesh(new THREE.TorusGeometry(0.12,0.02,6,12,Math.PI),f);
+  sm.rotation.x=Math.PI/2;sm.position.set(0,-0.12,0.25);
+  head.add(e1,e2,sm);
+
+  const aL=new THREE.Mesh(new THREE.BoxGeometry(0.25,0.9,0.25),m);
+  const aR=aL.clone();
+  aL.position.set(-0.6,1.6,0);
+  aR.position.set(0.6,1.6,0);
+  const lL=new THREE.Mesh(new THREE.BoxGeometry(0.3,1,0.3),m);
+  const lR=lL.clone();
+  lL.position.set(-0.2,0.6,0);
+  lR.position.set(0.2,0.6,0);
+
+  g.add(body,head,aL,aR,lL,lR);
+  return g;
+}
+
+// ================= PLAYER =================
+const player={mesh:human(0x00ffff),speed:1.3,inCar:false,car:null};
+scene.add(player.mesh);
+
+// ================= PEATONES =================
+const npcs=[];
+for(let i=0;i<60;i++){
+  let x,z;
+  do{
+    x=Math.random()*(MAP-200)-(MAP/2-100);
+    z=Math.random()*(MAP-200)-(MAP/2-100);
+  }while(!canMove(x,z,1.2));
+
+  const n=human(0xffa0b4);
+  n.position.set(x,0,z);
+  scene.add(n);
+  npcs.push({mesh:n,dir:Math.random()*Math.PI*2,speed:1.3,timer:0});
+}
+
+// ================= JOYSTICK =================
+const joy={x:0,y:0,active:false};
+const stick=document.getElementById("stick");
+joystick.ontouchstart=()=>joy.active=true;
+joystick.ontouchmove=e=>{
+  const t=e.touches[0],r=joystick.getBoundingClientRect();
+  joy.x=t.clientX-r.left-60;joy.y=t.clientY-r.top-60;
+  const d=Math.hypot(joy.x,joy.y);
+  if(d>40){joy.x*=40/d;joy.y*=40/d;}
+  stick.style.left=35+joy.x+"px";
+  stick.style.top=35+joy.y+"px";
+};
+joystick.ontouchend=()=>{joy.active=false;joy.x=joy.y=0;stick.style.left="35px";stick.style.top="35px";};
+
+// ================= CÁMARA =================
+let camAngle=0,lastX=null;
+renderer.domElement.addEventListener("touchstart",e=>lastX=e.touches[0].clientX);
+renderer.domElement.addEventListener("touchmove",e=>{
+  camAngle-=(e.touches[0].clientX-lastX)*0.005;
+  lastX=e.touches[0].clientX;
+});
+renderer.domElement.addEventListener("touchend",()=>lastX=null);
+
+// ================= LOOP =================
+function loop(){
+  requestAnimationFrame(loop);
+
+  if(joy.active){
+    const f=joy.y*player.speed*0.01;
+    const s=joy.x*player.speed*0.01;
+    const mx=Math.sin(camAngle)*f+Math.sin(camAngle+Math.PI/2)*s;
+    const mz=Math.cos(camAngle)*f+Math.cos(camAngle+Math.PI/2)*s;
+    const nx=player.mesh.position.x+mx;
+    const nz=player.mesh.position.z+mz;
+    if(canMove(nx,nz,0.8)){
+      player.mesh.position.x=nx;
+      player.mesh.position.z=nz;
+    }
+    player.mesh.rotation.y+=(Math.atan2(mx,mz)-player.mesh.rotation.y)*0.2;
+  }
+
+  npcs.forEach(n=>{
+    n.timer--;
+    if(n.timer<=0){n.dir=Math.random()*Math.PI*2;n.timer=120;}
+    const nx=n.mesh.position.x+Math.sin(n.dir)*n.speed*0.02;
+    const nz=n.mesh.position.z+Math.cos(n.dir)*n.speed*0.02;
+    if(canMove(nx,nz,0.8)){
+      n.mesh.position.x=nx;
+      n.mesh.position.z=nz;
+    }else n.dir+=Math.PI/2;
+  });
+
+  camera.position.set(
+    player.mesh.position.x+Math.sin(camAngle)*16,
+    9,
+    player.mesh.position.z+Math.cos(camAngle)*16
+  );
+  camera.lookAt(player.mesh.position.clone().add(new THREE.Vector3(0,2,0)));
+  renderer.render(scene,camera);
+}
+loop();
+</script>
+</body>
+</html>
